@@ -1,0 +1,44 @@
+# Environment & secrets
+.env
+*.env.local
+
+# Claude AI instructions (private)
+CLAUDE.md
+
+# Personal planning docs
+roadmap.md
+
+# Python
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.cache/
+
+# Docker volumes / local data
+postgres_data/
+redis_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Alembic local override
+alembic.ini.local
