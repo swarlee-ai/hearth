@@ -11,6 +11,7 @@ import { PantryPage } from "./pages/PantryPage";
 import { ChatPage } from "./pages/ChatPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { CollectionDetailPage } from "./pages/CollectionDetailPage";
+import { RecipeNewPage } from "./pages/RecipeNewPage";
 
 export const router = createBrowserRouter([
   {
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "recipes", element: <RecipesPage /> },
+      { path: "recipes/new", element: <RecipeNewPage /> },
       { path: "recipes/:id", element: <RecipeDetailPage /> },
       { path: "planner", element: <PlannerPage /> },
       { path: "shopping", element: <ShoppingPage /> },
