@@ -1,4 +1,4 @@
-# La Cucina — Meal Planner & Recipe Tracker
+# Hearth — Meal Planner & Recipe Tracker
 
 A self-hosted meal planning application for households that cook. Import recipes from any URL, organize them into collections, build weekly meal plans with AI assistance, generate smart shopping lists, and track your pantry — all in a single Docker Compose stack.
 

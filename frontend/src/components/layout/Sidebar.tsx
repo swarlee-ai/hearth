@@ -18,7 +18,7 @@ export function Sidebar() {
   return (
     <aside className="hidden md:flex w-56 flex-shrink-0 bg-secondary border-r flex-col h-full">
       <div className="p-5 border-b">
-        <p className="font-display text-lg font-medium text-primary leading-none">La Cucina</p>
+        <p className="font-display text-lg font-medium text-primary leading-none">Hearth</p>
         <p className="text-[9px] uppercase tracking-widest text-muted-foreground mt-1">Meal Planner</p>
       </div>
       <nav className="flex-1 py-3 pr-3 space-y-0.5">
