@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import settings, recipes, trusted_sites, meal_plans, shopping, nutrition, pantry, chat, collections
+from app.routers import settings, recipes, trusted_sites, meal_plans, shopping, nutrition, pantry, chat, collections, mission_control
 
 
 @asynccontextmanager
@@ -31,6 +31,7 @@ app.include_router(nutrition.router)
 app.include_router(pantry.router)
 app.include_router(chat.router)
 app.include_router(collections.router)
+app.include_router(mission_control.router)
 
 
 @app.get("/api/health")

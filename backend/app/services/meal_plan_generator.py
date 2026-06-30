@@ -1,35 +1,39 @@
 import json
+import logging
 import uuid
 from datetime import date, timedelta
 from typing import AsyncIterator
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.settings import AppSettings
-from app.models.recipe import Recipe
 from app.models.meal_plan import MealPlan, MealPlanEntry
-from app.services.llm_client import get_llm_client
+from app.models.recipe import Recipe
+from app.models.settings import AppSettings
+from app.services.llm_client import completion_extra_args, get_llm_client
+
+logger = logging.getLogger(__name__)
 
 
 async def generate_meal_plan(
     meal_plan: MealPlan,
     settings: AppSettings,
-    db: AsyncSession,
+    db,
     constraints: str | None = None,
     exclude_ids: list[uuid.UUID] | None = None,
 ) -> AsyncIterator[str]:
     """Stream SSE events while generating and saving meal plan entries."""
     client = get_llm_client(settings)
     if not client:
-        yield "data: {\"error\": \"LLM not configured\"}\n\n"
+        yield f'data: {{"error": "LLM not configured"}}\n\n'
         return
 
     recipes = await _get_candidate_recipes(db, settings, exclude_ids or [])
     if not recipes:
-        yield "data: {\"error\": \"No recipes in library. Add some recipes first.\"}\n\n"
+        yield f'data: {{"error": "No recipes in library. Add some recipes first."}}\n\n'
         return
 
+    # Only send the most useful subset (up to 40) — sending 150+ overloads the model.
+    selected = _select_recipes_for_prompt(recipes)
     recipe_list = [
         {
             "id": str(r.id),
@@ -38,11 +42,10 @@ async def generate_meal_plan(
             "tags": r.tags,
             "is_kid_friendly": r.is_kid_friendly,
             "is_leftover_friendly": r.is_leftover_friendly,
-            "leftover_days": r.leftover_days,
             "prep_time_minutes": r.prep_time_minutes,
             "is_favorite": r.is_favorite,
         }
-        for r in recipes
+        for r in selected
     ]
 
     week_dates = [
@@ -107,38 +110,49 @@ Rules:
 
 Output the JSON object only. Start your response with {{ and end with }}."""
 
-    yield "data: {\"status\": \"generating\"}\n\n"
+    yield f'data: {{"status": "generating"}}\n\n'
 
     full_response = ""
-    stream = await client.chat.completions.create(
-        model=settings.llm_model_name,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=4000,
-        temperature=0.7,
-        stream=True,
-    )
-    async for chunk in stream:
-        delta = chunk.choices[0].delta.content if chunk.choices else None
-        if delta:
-            full_response += delta
-            yield f"data: {{\"chunk\": {json.dumps(delta)}}}\n\n"
+    try:
+        stream = await client.chat.completions.create(
+            model=settings.llm_model_name,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4000,
+            temperature=0.7,
+            stream=True,
+            timeout=300.0,
+            **completion_extra_args(settings),
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                full_response += delta
+                yield f'data: {{"chunk": {json.dumps(delta)}}}\n\n'
+    except Exception as e:
+        logger.error("LLM generation error: %s", e)
+        yield f'data: {{"error": "LLM call failed: {str(e)}"}}\n\n'
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
 
-    await client.close()
+    if not full_response.strip():
+        yield f'data: {{"error": "The model returned an empty response. Try a simpler meal plan or check your LLM settings."}}\n\n'
+        return
 
     try:
         plan_data = _extract_json(full_response)
         entries_data = plan_data.get("entries", [])
         notes = plan_data.get("notes", "")
 
-        recipe_map = {str(r.id): r for r in recipes}
+        recipe_map = {str(r.id): r for r in selected}
 
         await db.execute(
             MealPlanEntry.__table__.delete().where(
                 MealPlanEntry.meal_plan_id == meal_plan.id
             )
         )
-
-        leftover_map: dict[str, uuid.UUID] = {}
 
         for entry_dict in entries_data:
             rid = entry_dict.get("recipe_id")
@@ -152,22 +166,19 @@ Output the JSON object only. Start your response with {{ and end with }}."""
                 sort_order=0,
             )
             db.add(entry)
-            if entry_dict.get("is_leftover") and entry.meal_type == "lunch":
-                pass  # leftover linking done in second pass if needed
 
         meal_plan.is_ai_generated = True
         meal_plan.generation_notes = notes
         await db.commit()
 
-        yield f"data: {{\"status\": \"complete\", \"notes\": {json.dumps(notes)}}}\n\n"
+        yield f'data: {{"status": "complete", "notes": {json.dumps(notes)}}}\n\n'
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error("Meal plan parse error. Raw response:\n%s", full_response)
-        yield f"data: {{\"error\": \"Failed to parse AI response: {str(e)}\"}}\n\n"
+        logger.error("Meal plan parse error. Raw response:\n%s", full_response)
+        yield f'data: {{"error": "Failed to parse AI response: {str(e)}"}}\n\n'
 
 
 async def _get_candidate_recipes(
-    db: AsyncSession, settings: AppSettings, exclude_ids: list[uuid.UUID]
+    db, settings: AppSettings, exclude_ids: list[uuid.UUID]
 ) -> list[Recipe]:
     q = select(Recipe)
     if exclude_ids:
@@ -175,6 +186,34 @@ async def _get_candidate_recipes(
     result = await db.execute(q)
     recipes = result.scalars().all()
     return list(recipes)
+
+
+def _select_recipes_for_prompt(recipes: list[Recipe], limit: int = 40) -> list[Recipe]:
+    """Pick the most useful subset of recipes to send to the model.
+
+    Strategy:
+    1. All favorites first (they're most likely to be used)
+    2. Kid-friendly recipes
+    3. Remaining recipes, balanced by cuisine type
+    """
+    if len(recipes) <= limit:
+        return list(recipes)
+
+    favorites = [r for r in recipes if r.is_favorite]
+    kid_friendly = [r for r in recipes if r.is_kid_friendly]
+    remaining = [r for r in recipes if not r.is_favorite and not r.is_kid_friendly]
+
+    # De-duplicate by id
+    seen = set()
+    selected: list[Recipe] = []
+    for r in favorites + kid_friendly + remaining:
+        if str(r.id) not in seen:
+            seen.add(str(r.id))
+            selected.append(r)
+        if len(selected) >= limit:
+            break
+
+    return selected
 
 
 def _build_family_context(settings: AppSettings) -> str:

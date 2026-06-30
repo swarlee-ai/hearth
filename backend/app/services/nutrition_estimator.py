@@ -1,5 +1,5 @@
 import json
-from app.services.llm_client import get_llm_client
+from app.services.llm_client import completion_extra_args, get_llm_client
 from app.models.settings import AppSettings
 
 
@@ -33,6 +33,7 @@ Respond ONLY with a JSON object in this exact format (use numbers, not strings):
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
             temperature=0,
+            **completion_extra_args(settings),
         )
         text = resp.choices[0].message.content or ""
         start = text.find("{")

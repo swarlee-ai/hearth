@@ -9,7 +9,7 @@ from app.dependencies import get_db
 from app.models.settings import AppSettings
 from app.models.recipe import Recipe
 from app.models.pantry_item import PantryItem
-from app.services.llm_client import get_llm_client
+from app.services.llm_client import completion_extra_args, get_llm_client
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -98,6 +98,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     ]
 
     async def _stream():
+        emitted_content = False
         try:
             stream = await client.chat.completions.create(
                 model=model,
@@ -105,15 +106,20 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                 stream=True,
                 max_tokens=1024,
                 temperature=0.7,
+                **completion_extra_args(settings),
             )
             async for chunk in stream:
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
+                    emitted_content = True
                     yield f"data: {json.dumps({'chunk': delta})}\n\n"
+            if not emitted_content:
+                yield f"data: {json.dumps({'chunk': 'I did not receive any answer text from the configured model. Try again or check the LLM settings.'})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
             await client.close()
+            await db.close()
 
     return StreamingResponse(_stream(), media_type="text/event-stream")

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,6 +151,9 @@ async def trigger_generate(
             exclude_ids=data.exclude_recipe_ids,
         ):
             yield chunk
+
+        # Ensure the session is properly returned to the pool after streaming ends.
+        await db.close()
 
     return StreamingResponse(
         event_stream(),
